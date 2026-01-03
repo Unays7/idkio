@@ -33,19 +33,20 @@ struct IoUring {
   io_uring_cqe *cqes;
 };
 
-auto io_uring_setup(auto entries, io_uring_params *p) {
+auto io_uring_setup(auto entries,
+                    io_uring_params *p) { // should ideally return std::result??
   auto ret = syscall(__NR_io_uring_setup, entries, p);
   return (ret < 0) ? -errno : ret;
 }
 
 auto io_uring_enter(auto ring_fd, auto to_submit, auto min_complete,
-                    auto flags) {
+                    auto flags) { // should ideally return std::result??
   auto ret = syscall(__NR_io_uring_enter, ring_fd, to_submit, min_complete,
                      flags, NULL, 0);
   return (ret < 0) ? -errno : ret;
 }
 
-auto app_setup_uring(IoUring &ring) {
+auto app_setup_uring(IoUring &ring) { // should ideally return std::result??
   constexpr auto ring_depth = 20;
   io_uring_params params{};
   auto ring_fd = io_uring_setup(ring_depth, &params);

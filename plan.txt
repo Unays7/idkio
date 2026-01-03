@@ -1,0 +1,4 @@
+1. get this io-uring to work via reading and echo'ing terminal
+2. build a simple event frame work
+3. idk maybe look at some TLS shit??
+4. try to read and parse some mkt data using it???
