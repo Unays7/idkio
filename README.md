@@ -1,7 +1,5 @@
 # io-uring-cpp
 
-idk something about less syscalls ig?
-
 C++23 io-uring based async event loop.
 
 ## Resources
