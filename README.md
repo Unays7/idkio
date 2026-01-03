@@ -1,4 +1,4 @@
-# io-uring-cpp
+# idkio
 
 C++23 io-uring based async event loop.
 
