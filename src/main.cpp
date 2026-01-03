@@ -1,8 +1,11 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstddef>
+#include <cstring>
 #include <iostream>
+#include <linux/fs.h>
 #include <linux/io_uring.h>
+#include <stdatomic.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
@@ -12,8 +15,9 @@ template <typename T> T *offset_ptr(void *base, size_t offset) {
   return (T *)((char *)base + offset);
 }
 
-struct SharedRing {
+struct IoUring {
   int ring_fd;
+  char buff[BLOCK_SIZE];
 
   // submission queue pointers
   unsigned *sq_head;
@@ -34,7 +38,6 @@ auto io_uring_setup(auto entries, io_uring_params *p) {
   return (ret < 0) ? -errno : ret;
 }
 
-// not needed if SQPolling is enabled
 auto io_uring_enter(auto ring_fd, auto to_submit, auto min_complete,
                     auto flags) {
   auto ret = syscall(__NR_io_uring_enter, ring_fd, to_submit, min_complete,
@@ -42,7 +45,7 @@ auto io_uring_enter(auto ring_fd, auto to_submit, auto min_complete,
   return (ret < 0) ? -errno : ret;
 }
 
-auto app_setup_uring(SharedRing &ring) {
+auto app_setup_uring(IoUring &ring) {
   constexpr auto ring_depth = 20;
   io_uring_params params{};
   auto ring_fd = io_uring_setup(ring_depth, &params);
@@ -87,8 +90,50 @@ auto app_setup_uring(SharedRing &ring) {
   return 0;
 }
 
+int read_cq(IoUring ring) {
+  // dequeue completion queue entry
+  // add to tail of ring buffer
+
+  return 0;
+}
+int write_sq(auto file_descriptor, int op_code, IoUring ring) {
+  // create some sort of submission queue entry
+  // add to tail of ring buffer
+
+  auto idx = *ring.sq_tail & *ring.sq_mask;
+  auto sqe = &ring.sqes[idx];
+
+  if (op_code == IORING_OP_READ) {
+    memset(ring.buff, 0, sizeof(ring.buff));
+    sqe->len = BLOCK_SIZE;
+  } else {
+    sqe->len = strlen(ring.buff);
+  }
+
+  sqe->off = off_t{};
+
+  sqe->opcode = op_code;
+  sqe->fd = file_descriptor;
+  sqe->addr = (unsigned long)&ring.buff;
+
+  *ring.sq_tail += 1;
+  ring.sq_array[idx] = idx;
+
+  // idk how to use cpp atomics but we need memory ordering or barriers or wtv
+  // atomic_store_explicit();
+  // syscall to submit entry
+  auto ret =
+      io_uring_enter(ring.ring_fd, 1, 1,
+                     IORING_ENTER_GETEVENTS); // TO-DO how do we use sqpoll ???
+  if (ret < 0) {
+    std::cout << "Error submiting" << std::endl;
+    return -1;
+  }
+  return 0;
+}
+
 int main() {
-  SharedRing ring{};
+  IoUring ring{};
   if (app_setup_uring(ring) != 1) {
     std::cout << "IO uring set-up success" << std::endl;
   }
