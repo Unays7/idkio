@@ -97,7 +97,7 @@ int read_cq(IoUring ring) {
 
   return 0;
 }
-int write_sq(auto file_descriptor, int op_code, IoUring ring) {
+int write_sq(int op_code, IoUring ring) {
   // create some sort of submission queue entry
   // add to tail of ring buffer
 
@@ -114,7 +114,7 @@ int write_sq(auto file_descriptor, int op_code, IoUring ring) {
   sqe->off = off_t{};
 
   sqe->opcode = op_code;
-  sqe->fd = file_descriptor;
+  sqe->fd = ring.ring_fd;
   sqe->addr = (unsigned long)&ring.buff;
 
   *ring.sq_tail += 1;
@@ -137,5 +137,11 @@ int main() {
   IoUring ring{};
   if (app_setup_uring(ring) != 1) {
     std::cout << "IO uring set-up success" << std::endl;
+  }
+  // submit req to read file... hot loop on completion queue
+  auto res = write_sq(IORING_OP_READ, ring);
+
+  while (true) {
+    // can we read?? if so yes, break and stdout the file contents
   }
 }
