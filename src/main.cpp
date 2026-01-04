@@ -32,14 +32,14 @@ struct IoUring {
   io_uring_cqe *cqes;
 };
 
-auto io_uring_setup(auto entries,
+auto io_uring_setup(uint entries,
                     io_uring_params *p) { // should ideally return std::result??
   auto ret = syscall(__NR_io_uring_setup, entries, p);
   return (ret < 0) ? -errno : ret;
 }
 
-auto io_uring_enter(auto ring_fd, auto to_submit, auto min_complete,
-                    auto flags) { // should ideally return std::result??
+auto io_uring_enter(uint ring_fd, uint to_submit, uint min_complete,
+                    uint flags) { // should ideally return std::result??
   auto ret = syscall(__NR_io_uring_enter, ring_fd, to_submit, min_complete,
                      flags, NULL, 0);
   return (ret < 0) ? -errno : ret;
@@ -135,12 +135,13 @@ int write_sq(int op_code, IoUring ring) {
 int main() {
   IoUring ring{};
   if (app_setup_uring(ring) != 1) {
-    std::cout << "IO uring set-up success" << std::endl;
+    std::cout << "IO uring app set-up success " << std::endl;
   }
   // submit req to read file... hot loop on completion queue
   auto res = write_sq(IORING_OP_READ, ring);
 
   while (true) {
     // can we read?? if so yes, break and stdout the file contents
+    std::cout << "FUCK U" << std::endl;
   }
 }
