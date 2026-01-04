@@ -5,7 +5,6 @@
 #include <iostream>
 #include <linux/fs.h>
 #include <linux/io_uring.h>
-#include <stdatomic.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
