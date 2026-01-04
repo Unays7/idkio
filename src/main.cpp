@@ -2,6 +2,7 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstring>
+#include <fcntl.h>
 #include <iostream>
 #include <linux/fs.h>
 #include <linux/io_uring.h>
@@ -10,13 +11,15 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+constexpr auto BUFF_SIZE = 4096;
+
 template <typename T> T *offset_ptr(void *base, size_t offset) {
   return (T *)((char *)base + offset);
 }
 
 struct IoUring {
   int ring_fd;
-  char buff[BLOCK_SIZE];
+  char buff[BUFF_SIZE];
 
   // submission queue pointers
   unsigned *sq_head;
@@ -90,13 +93,28 @@ auto app_setup_uring(IoUring &ring) { // should ideally return std::result??
   return 0;
 }
 
-int read_cq(IoUring ring) {
-  // dequeue completion queue entry
-  // add to tail of ring buffer
+int read_cq(IoUring &ring) {
+  auto head = *ring.cq_head;
+  auto tail = *ring.cq_tail; // TO-DO Atomics
 
-  return 0;
+  if (head == tail) {
+    return -1;
+  }
+
+  auto idx = head & *ring.cq_mask;
+  auto cqe = &ring.cqes[idx];
+
+  if (cqe->res < 0) {
+    std::cout << "IO error: " << strerror(-cqe->res) << std::endl;
+    return cqe->res;
+  }
+
+  std::cout << "Read " << cqe->res << " bytes: " << ring.buff << std::endl;
+
+  *ring.cq_head = head + 1; // TO-DO Atomics
+  return cqe->res;
 }
-int write_sq(int op_code, IoUring ring) {
+int write_sq(int fd, int op_code, IoUring &ring) {
   // create some sort of submission queue entry
   // add to tail of ring buffer
 
@@ -105,7 +123,7 @@ int write_sq(int op_code, IoUring ring) {
 
   if (op_code == IORING_OP_READ) {
     memset(ring.buff, 0, sizeof(ring.buff));
-    sqe->len = BLOCK_SIZE;
+    sqe->len = BUFF_SIZE;
   } else {
     sqe->len = strlen(ring.buff);
   }
@@ -113,7 +131,7 @@ int write_sq(int op_code, IoUring ring) {
   sqe->off = off_t{};
 
   sqe->opcode = op_code;
-  sqe->fd = ring.ring_fd;
+  sqe->fd = fd;
   sqe->addr = (unsigned long)&ring.buff;
 
   *ring.sq_tail += 1;
@@ -137,11 +155,14 @@ int main() {
   if (app_setup_uring(ring) != 1) {
     std::cout << "IO uring app set-up success " << std::endl;
   }
-  // submit req to read file... hot loop on completion queue
-  auto res = write_sq(IORING_OP_READ, ring);
+
+  int file_fd = open("/tmp/test.txt", O_RDONLY);
+  auto res = write_sq(file_fd, IORING_OP_READ, ring);
 
   while (true) {
-    // can we read?? if so yes, break and stdout the file contents
-    std::cout << "FUCK U" << std::endl;
+    auto result = read_cq(ring);
+    if (result >= 0) {
+      break;
+    }
   }
 }
