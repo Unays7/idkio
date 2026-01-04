@@ -43,3 +43,6 @@
 # build and cache
 build/*
 .cache/*
+
+# json files
+*.json
