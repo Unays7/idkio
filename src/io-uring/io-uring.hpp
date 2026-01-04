@@ -8,13 +8,20 @@
 namespace io_uring {
 
 constexpr auto BUFF_SIZE = 4096;
+constexpr auto RING_SIZE = 1000;
 
 class Ring {
 public:
-  Ring();
   ~Ring();
-  int submit(int fd, int op_code);
-  int reap();
+  int init();
+  int submit_read(
+      int fd, int op_code); // kinda shitty api interface, add some abstraction
+                            // users should not have to know opcodes
+  int submit_write(int fd, int op_code);
+  int wait();
+
+  Ring(const Ring &) = delete;
+  Ring &operator=(const Ring &) = delete;
 
 private:
   int ring_fd;
