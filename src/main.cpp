@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <cstddef>
 #include <cstring>
@@ -15,6 +16,16 @@ constexpr auto BUFF_SIZE = 4096;
 
 template <typename T> T *offset_ptr(void *base, size_t offset) {
   return (T *)((char *)base + offset);
+}
+
+template <typename T> void store_release(T *ptr, T val) {
+  reinterpret_cast<std::atomic<T> *>(ptr)->store(val,
+                                                 std::memory_order_release);
+}
+
+template <typename T> T load_acquire(T *ptr) {
+  return reinterpret_cast<std::atomic<T> *>(ptr)->load(
+      std::memory_order_acquire);
 }
 
 struct IoUring {
@@ -35,20 +46,19 @@ struct IoUring {
   io_uring_cqe *cqes;
 };
 
-auto io_uring_setup(uint entries,
-                    io_uring_params *p) { // should ideally return std::result??
+auto io_uring_setup(uint entries, io_uring_params *p) {
   auto ret = syscall(__NR_io_uring_setup, entries, p);
   return (ret < 0) ? -errno : ret;
 }
 
 auto io_uring_enter(uint ring_fd, uint to_submit, uint min_complete,
-                    uint flags) { // should ideally return std::result??
+                    uint flags) {
   auto ret = syscall(__NR_io_uring_enter, ring_fd, to_submit, min_complete,
                      flags, NULL, 0);
   return (ret < 0) ? -errno : ret;
 }
 
-auto app_setup_uring(IoUring &ring) { // should ideally return std::result??
+auto app_setup_uring(IoUring &ring) {
   constexpr auto ring_depth = 20;
   io_uring_params params{};
   auto ring_fd = io_uring_setup(ring_depth, &params);
@@ -95,7 +105,7 @@ auto app_setup_uring(IoUring &ring) { // should ideally return std::result??
 
 int read_cq(IoUring &ring) {
   auto head = *ring.cq_head;
-  auto tail = *ring.cq_tail; // TO-DO Atomics
+  auto tail = load_acquire(ring.cq_tail);
 
   if (head == tail) {
     return -1;
@@ -111,7 +121,8 @@ int read_cq(IoUring &ring) {
 
   std::cout << "Read " << cqe->res << " bytes: " << ring.buff << std::endl;
 
-  *ring.cq_head = head + 1; // TO-DO Atomics
+  store_release(ring.cq_head, head + 1);
+
   return cqe->res;
 }
 int write_sq(int fd, int op_code, IoUring &ring) {
@@ -134,11 +145,11 @@ int write_sq(int fd, int op_code, IoUring &ring) {
   sqe->fd = fd;
   sqe->addr = (unsigned long)&ring.buff;
 
-  *ring.sq_tail += 1;
   ring.sq_array[idx] = idx;
 
-  // idk how to use cpp atomics but we need memory ordering or barriers or wtv
-  // atomic_store_explicit();
+  auto tail_val = ring.sq_tail;
+  store_release(ring.sq_tail, *tail_val + 1);
+
   // syscall to submit entry
   auto ret =
       io_uring_enter(ring.ring_fd, 1, 1,
