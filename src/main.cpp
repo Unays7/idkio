@@ -1,179 +1,54 @@
-#include <algorithm>
-#include <atomic>
-#include <cerrno>
-#include <cstddef>
+#include "idkio.hpp"
 #include <cstring>
 #include <fcntl.h>
 #include <iostream>
-#include <linux/fs.h>
-#include <linux/io_uring.h>
-#include <sys/mman.h>
-#include <sys/syscall.h>
-#include <sys/types.h>
-#include <unistd.h>
+#include <thread>
 
-constexpr auto BUFF_SIZE = 4096;
+int main() {
+  idkio::IdkIo io;
 
-template <typename T> T *offset_ptr(void *base, size_t offset) {
-  return (T *)((char *)base + offset);
-}
-
-template <typename T> void store_release(T *ptr, T val) {
-  reinterpret_cast<std::atomic<T> *>(ptr)->store(val,
-                                                 std::memory_order_release);
-}
-
-template <typename T> T load_acquire(T *ptr) {
-  return reinterpret_cast<std::atomic<T> *>(ptr)->load(
-      std::memory_order_acquire);
-}
-
-struct IoUring {
-  int ring_fd;
-  char buff[BUFF_SIZE];
-
-  // submission queue pointers
-  unsigned *sq_head;
-  unsigned *sq_tail;
-  unsigned *sq_mask;
-  unsigned *sq_array;
-  io_uring_sqe *sqes;
-
-  // completion queue pointers
-  unsigned *cq_head;
-  unsigned *cq_tail;
-  unsigned *cq_mask;
-  io_uring_cqe *cqes;
-};
-
-auto io_uring_setup(uint entries, io_uring_params *p) {
-  auto ret = syscall(__NR_io_uring_setup, entries, p);
-  return (ret < 0) ? -errno : ret;
-}
-
-auto io_uring_enter(uint ring_fd, uint to_submit, uint min_complete,
-                    uint flags) {
-  auto ret = syscall(__NR_io_uring_enter, ring_fd, to_submit, min_complete,
-                     flags, NULL, 0);
-  return (ret < 0) ? -errno : ret;
-}
-
-auto app_setup_uring(IoUring &ring) {
-  constexpr auto ring_depth = 20;
-  io_uring_params params{};
-  auto ring_fd = io_uring_setup(ring_depth, &params);
-  if (ring_fd < 0) {
-    std::cout << "IO uring set-up failed" << std::endl;
+  int write_fd =
+      open("/tmp/idkio_test.txt", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+  if (write_fd < 0) {
+    std::cout << "Failed to open file for writing" << std::endl;
     return 1;
   }
 
-  auto sring_sz = params.sq_off.array + params.sq_entries * sizeof(unsigned);
-  auto cring_sz = params.cq_off.cqes + params.cq_entries * sizeof(io_uring_cqe);
-
-  void *sq_ptr, *cq_ptr;
-
-  if (params.features & IORING_FEAT_SINGLE_MMAP) {
-    auto ring_sz = std::max(sring_sz, cring_sz);
-    sq_ptr = mmap(nullptr, ring_sz, PROT_READ | PROT_WRITE,
-                  MAP_SHARED | MAP_POPULATE, ring_fd, IORING_OFF_SQ_RING);
-    cq_ptr = sq_ptr;
-  } else {
-    sq_ptr = mmap(nullptr, sring_sz, PROT_READ | PROT_WRITE,
-                  MAP_SHARED | MAP_POPULATE, ring_fd, IORING_OFF_SQ_RING);
-    cq_ptr = mmap(nullptr, cring_sz, PROT_READ | PROT_WRITE,
-                  MAP_SHARED | MAP_POPULATE, ring_fd, IORING_OFF_CQ_RING);
+  int read_fd = open("/tmp/idkio_test.txt", O_RDONLY);
+  if (read_fd < 0) {
+    std::cout << "Failed to open file for reading" << std::endl;
+    return 1;
   }
 
-  auto sqes_ptr = mmap(nullptr, params.sq_entries * sizeof(io_uring_sqe),
-                       PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE,
-                       ring_fd, IORING_OFF_SQES);
+  const char *write_buf = "yoyo from idkio";
+  char read_buf[128] = {0};
 
-  ring.ring_fd = ring_fd;
-  ring.sq_head = offset_ptr<unsigned>(sq_ptr, params.sq_off.head);
-  ring.sq_tail = offset_ptr<unsigned>(sq_ptr, params.sq_off.tail);
-  ring.sq_mask = offset_ptr<unsigned>(sq_ptr, params.sq_off.ring_mask);
-  ring.sq_array = offset_ptr<unsigned>(sq_ptr, params.sq_off.array);
-  ring.sqes = (io_uring_sqe *)sqes_ptr;
+  std::thread loop_thread([&]() { io.build(); });
 
-  ring.cq_head = offset_ptr<unsigned>(cq_ptr, params.cq_off.head);
-  ring.cq_tail = offset_ptr<unsigned>(cq_ptr, params.cq_off.tail);
-  ring.cq_mask = offset_ptr<unsigned>(cq_ptr, params.cq_off.ring_mask);
-  ring.cqes = offset_ptr<io_uring_cqe>(cq_ptr, params.cq_off.cqes);
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-  return 0;
-}
-
-int read_cq(IoUring &ring) {
-  auto head = *ring.cq_head;
-  auto tail = load_acquire(ring.cq_tail);
-
-  if (head == tail) {
-    return -1;
-  }
-
-  auto idx = head & *ring.cq_mask;
-  auto cqe = &ring.cqes[idx];
-
-  if (cqe->res < 0) {
-    std::cout << "IO error: " << strerror(-cqe->res) << std::endl;
-    return cqe->res;
-  }
-
-  std::cout << "Read " << cqe->res << " bytes: " << ring.buff << std::endl;
-
-  store_release(ring.cq_head, head + 1);
-
-  return cqe->res;
-}
-int write_sq(int fd, int op_code, IoUring &ring) {
-  // create some sort of submission queue entry
-  // add to tail of ring buffer
-
-  auto idx = *ring.sq_tail & *ring.sq_mask;
-  auto sqe = &ring.sqes[idx];
-
-  if (op_code == IORING_OP_READ) {
-    memset(ring.buff, 0, sizeof(ring.buff));
-    sqe->len = BUFF_SIZE;
-  } else {
-    sqe->len = strlen(ring.buff);
-  }
-
-  sqe->off = off_t{};
-
-  sqe->opcode = op_code;
-  sqe->fd = fd;
-  sqe->addr = (unsigned long)&ring.buff;
-
-  ring.sq_array[idx] = idx;
-
-  auto tail_val = ring.sq_tail;
-  store_release(ring.sq_tail, *tail_val + 1);
-
-  // syscall to submit entry
-  auto ret =
-      io_uring_enter(ring.ring_fd, 1, 1,
-                     IORING_ENTER_GETEVENTS); // TO-DO how do we use sqpoll ???
-  if (ret < 0) {
-    std::cout << "Error submiting" << std::endl;
-    return -1;
-  }
-  return 0;
-}
-
-int main() {
-  IoUring ring{};
-  if (app_setup_uring(ring) != 1) {
-    std::cout << "IO uring app set-up success " << std::endl;
-  }
-
-  int file_fd = open("/tmp/test.txt", O_RDONLY);
-  auto res = write_sq(file_fd, IORING_OP_READ, ring);
-
-  while (true) {
-    auto result = read_cq(ring);
-    if (result >= 0) {
-      break;
+  io.async_write(write_fd, write_buf, strlen(write_buf), [&](int res) {
+    if (res < 0) {
+      std::cout << "Write failed: " << strerror(-res) << std::endl;
+      io.stop();
+      return;
     }
-  }
+    std::cout << "Wrote " << res << " bytes" << std::endl;
+
+    io.async_read(read_fd, read_buf, sizeof(read_buf), [&](int res) {
+      if (res < 0) {
+        std::cout << "Read failed: " << strerror(-res) << std::endl;
+      } else {
+        std::cout << "Read " << res << " bytes: " << read_buf << std::endl;
+      }
+      io.stop();
+    });
+  });
+
+  loop_thread.join();
+
+  close(write_fd);
+  close(read_fd);
+
+  return 0;
 }

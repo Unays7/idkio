@@ -7,26 +7,24 @@
 
 namespace io_uring {
 
-constexpr auto BUFF_SIZE = 4096;
 constexpr auto RING_SIZE = 1000;
 
 class Ring {
 public:
-  ~Ring();
+  Ring() = default;
   int init();
-  int submit_read(
-      int fd, int op_code); // kinda shitty api interface, add some abstraction
-                            // users should not have to know opcodes
-  int submit_write(int fd, int op_code);
-  int wait();
+  ~Ring();
+  io_uring_sqe *get_sqe_slot();
+  int submit();
+  int submit_and_wait(unsigned n);
+  io_uring_cqe *peek_cqe();
+  void cqe_seen();
 
   Ring(const Ring &) = delete;
   Ring &operator=(const Ring &) = delete;
 
 private:
   int ring_fd;
-  char buff[BUFF_SIZE];
-
   unsigned *sq_head;
   unsigned *sq_tail;
   unsigned *sq_mask;
@@ -37,6 +35,8 @@ private:
   unsigned *cq_tail;
   unsigned *cq_mask;
   io_uring_cqe *cqes;
+
+  unsigned sq_submitted_tail = 0;
 };
 
 template <typename T> T *offset_ptr(void *base, size_t offset) {

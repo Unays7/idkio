@@ -5,5 +5,10 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-add_executable(idkio src/main.cpp)
-target_include_directories(idkio PRIVATE include)
+add_executable(idkio
+  src/main.cpp
+  src/idkio.cpp
+  src/io-uring/io-uring.cpp
+)
+
+target_include_directories(idkio PRIVATE src)
